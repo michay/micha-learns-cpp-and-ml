@@ -2,6 +2,7 @@
 #include <vector>
 #include <numeric>
 #include <algorithm>
+#include <math.h>
 
 #define BOARD_SIZE_X 3
 #define BOARD_SIZE_Y 3
@@ -19,7 +20,6 @@ class TicTacToe
    BoardPiece next_move;
    BoardPiece winner;
    BoardPiece board[BOARD_SIZE_X][BOARD_SIZE_Y];
-   std::vector<int> possible_moves;
 
    void check_winner();
    BoardPiece check_row(int x, int y);
@@ -27,6 +27,8 @@ class TicTacToe
    BoardPiece check_diag(int x, int y);
 
 public:
+   std::vector<int> possible_moves;
+
    TicTacToe();
 
    void set_piece(int index);
@@ -40,46 +42,91 @@ public:
 
 class MCNode
 {
-   int num_simulations;
-   int num_victories;
+   int simulations;
+   int victories;
    int last_access;
-   std::vector<MCNode> children;
+   int move;
 
 public:
-   MCNode(int timestamp);
+   std::vector<MCNode*> children;
 
-   void add_child(MCNode child);
+   MCNode(game_move);
+
+   void add_child(MCNode* child_p);
+
+   int get_simulations() { return simulations; }
+   int get_wins() { return victories; }
+
+   float get_ucb1(int total_simulations);
 };
 
-class MCST
+class MCTS
 {
-   int timestamp;
    MCNode root;
+   MCNode* create_child();
+
+   void print_tree(int level, MCNode &root);
 
 public:
-   MCST() : root(0)  {}
-   MCNode create_child();
+   MCTS() : root(-1)  {}
+
+   // Game related
+   void find_next_move(TicTacToe& board);
+
+   // Print related
+   void print_tree();
 };
 
-MCNode MCST::create_child(void)
+MCNode* MCTS::create_child(void)
 {
-   MCNode child(timestamp);
+   MCNode* child_p = new MCNode(timestamp);
 
-   root.add_child(child);
+   root.add_child(child_p);
 
-   return child;
+   return child_p;
 }
 
-MCNode::MCNode(int timestamp)
+void MCTS::find_next_move(TicTacToe& board)
 {
-   num_simulations = 0;
-   num_victories = 0;
-   last_access = timestamp;
+   // Create copy of game
+   TicTacToe game = board;
+
+   for (auto& move: board.possible_moves)
+   {
+      root.add_child(
+   }
 }
 
-void MCNode::add_child(MCNode child)
+void MCTS::print_tree()
 {
-   children.push_back(child);
+   print_tree(0, root);
+}
+
+void MCTS::print_tree(int level, MCNode &root)
+{
+   std::cout << std::string(level, ' ') << ">";
+   std::cout << "simulations: " << root.get_simulations() << " wins: " << root.get_wins()  << std::endl;
+   for(auto& child: root.children)
+   {
+      print_tree(level + 1, *child);
+   }
+}
+
+MCNode::MCNode(int game_move)
+{
+   simulations = 0;
+   victories = 0;
+   move = game_move;
+}
+
+float MCNode::get_ucb1(int total_simulations)
+{
+   return static_cast<float>(victories)/simulations + 2*sqrt(log(total_simulations)/simulations);
+}
+
+void MCNode::add_child(MCNode* child_p)
+{
+   children.push_back(child_p);
 }
 
 TicTacToe::TicTacToe(void) : possible_moves(BOARD_SIZE_X*BOARD_SIZE_Y), next_move(BoardPiece::X), winner(BoardPiece::Empty)
@@ -257,10 +304,15 @@ int main(void)
       game.set_piece(user_input);
 
       // Set PC piece
-      game.play_random_move();
+      //game.play_random_move();
       
       // Print board
       game.print_board();
+      
+      // Create MCTS object
+      MCTS tree;
+      tree.find_next_move(game);
+      tree.print_tree();
    }
 
    std::cout << "Winner is: " << static_cast<int>(game.who_won());
