@@ -20,6 +20,7 @@ class TicTacToe
    BoardPiece next_move;
    BoardPiece winner;
    BoardPiece board[BOARD_SIZE_X][BOARD_SIZE_Y];
+   int last_move_index = -1;
 
    void check_winner();
    BoardPiece check_row(int x, int y);
@@ -34,8 +35,12 @@ public:
    void set_piece(int index);
    void play_random_move();
 
+   bool is_legal_move(int index) { return find(possible_moves.begin(), possible_moves.end(), index) != possible_moves.end(); }
+
    int is_game_over() { return possible_moves.empty() || winner != BoardPiece::Empty; }
    BoardPiece who_won() { return winner; }
+   BoardPiece whos_next() { return next_move; }
+   int last_move() { return last_move_index; }
 
    void print_board();
 };
@@ -44,57 +49,162 @@ class MCNode
 {
    int simulations;
    int victories;
-   int last_access;
    int move;
 
 public:
+   TicTacToe game;
    std::vector<MCNode*> children;
+   MCNode* parent;
 
-   MCNode(game_move);
+   MCNode(TicTacToe game_board, int game_move);
 
    void add_child(MCNode* child_p);
+   void add_child(TicTacToe game_board, int move);
 
+   int get_move() { return move; }
    int get_simulations() { return simulations; }
    int get_wins() { return victories; }
 
-   float get_ucb1(int total_simulations);
+   void update_simulation_result(bool did_win);
+
+   bool is_first_simulation() { return simulations == 0; }
+   double get_ucb1(int total_simulations);
 };
 
 class MCTS
 {
    MCNode root;
-   MCNode* create_child();
 
    void print_tree(int level, MCNode &root);
 
 public:
-   MCTS() : root(-1)  {}
+   MCTS(TicTacToe board): root(board, -1) { }
+
+   static int total_simulations;
 
    // Game related
-   void find_next_move(TicTacToe& board);
+   int find_next_move();
 
    // Print related
    void print_tree();
 };
+int MCTS::total_simulations = 0;
 
-MCNode* MCTS::create_child(void)
+int MCTS::find_next_move()
 {
-   MCNode* child_p = new MCNode(timestamp);
+   // Perform mcts iterations
+   MCNode* root_node = &root;
+   MCNode* selected_child = nullptr;
+   auto max_simulations = 5000;
+   BoardPiece next_move = root.game.whos_next();
 
-   root.add_child(child_p);
+   while (!selected_child && max_simulations > 0)
+   {
+      // Check 0 children
+      if (root_node->children.size() == 0)
+      {
+         // Add all possible moves
+         TicTacToe* parent_game = &root_node->game;
+         for (auto& move : parent_game->possible_moves)
+         {
+            // Create copy of board
+            TicTacToe game = *parent_game;
 
-   return child_p;
+            // Play selected move
+            game.set_piece(move);
+
+            // Create child
+            root_node->add_child(game, move);
+         }
+      }
+
+      if (root_node->children.size() == 0)
+      {
+         MCTS::total_simulations++;
+         max_simulations--;
+
+         // Reset root
+         root_node = &root;
+         selected_child = NULL;
+
+      }
+
+      auto ucb1 = -1.0;
+      for (auto& child : root_node->children)
+      {
+         if (child->is_first_simulation())
+         {
+            // Select this child
+            selected_child = child;
+            break;
+         }
+         
+         auto local_ucb1 = child->get_ucb1(MCTS::total_simulations);
+         if (local_ucb1 > ucb1)
+         {
+            ucb1 = local_ucb1;
+            selected_child = child;
+         }
+      }
+
+      // Check if first visit
+      if (selected_child->get_simulations() > 0)
+      {
+         // Re-scan with child
+         root_node = selected_child;
+         selected_child = nullptr;
+         continue;
+      }
+
+      // Leaf node with highest UCB1 - perform rollout with a copy of the game
+      TicTacToe game_copy = selected_child->game;
+      while (!game_copy.is_game_over())
+      {
+         game_copy.play_random_move();
+      }
+
+      // Check if we won
+      auto did_win = game_copy.who_won() == next_move;
+
+      // Update tree
+      selected_child->update_simulation_result(did_win);
+
+      // Reset root
+      root_node = &root;
+      selected_child = NULL;
+
+      // Update performed simulation
+      max_simulations--;
+   }
+
+   // Select node with highest UCB1
+   auto ucb1 = 0.0;
+   selected_child = root.children[0];
+   for (auto& child : root.children)
+   {
+      if (!child->is_first_simulation())
+      {
+         if (child->get_ucb1(MCTS::total_simulations) > ucb1)
+         {
+            ucb1 = child->get_ucb1(MCTS::total_simulations);
+            selected_child = child;
+         }
+      }
+   }
+
+   return selected_child->game.last_move();
 }
 
-void MCTS::find_next_move(TicTacToe& board)
+void MCNode::update_simulation_result(bool did_win)
 {
-   // Create copy of game
-   TicTacToe game = board;
+   // Update simulations 
+   simulations++;
+   MCTS::total_simulations++;
+   if (did_win)
+      victories++;
 
-   for (auto& move: board.possible_moves)
-   {
-      root.add_child(
-   }
+   if (parent != nullptr)
+      parent->update_simulation_result(did_win);
 }
 
 void MCTS::print_tree()
@@ -104,28 +214,44 @@ void MCTS::print_tree()
 
 void MCTS::print_tree(int level, MCNode &root)
 {
-   std::cout << std::string(level, ' ') << ">";
-   std::cout << "simulations: " << root.get_simulations() << " wins: " << root.get_wins()  << std::endl;
+   if (level > 1)
+      return;
+
+   for (int i = 0; i < level; ++i)
+   {
+      std::cout << "  ";
+   }
+   std::cout << ">";
+   std::cout << "move: " << root.get_move() << " simulations: " << root.get_simulations() << " wins: " << root.get_wins() << " ucb1: " << root.get_ucb1(MCTS::total_simulations) << std::endl;
    for(auto& child: root.children)
    {
       print_tree(level + 1, *child);
    }
 }
 
-MCNode::MCNode(int game_move)
+MCNode::MCNode(TicTacToe game_board, int game_move)
 {
    simulations = 0;
    victories = 0;
+   game = game_board;
    move = game_move;
+   parent = nullptr;
 }
 
-float MCNode::get_ucb1(int total_simulations)
+double MCNode::get_ucb1(int total_simulations)
 {
-   return static_cast<float>(victories)/simulations + 2*sqrt(log(total_simulations)/simulations);
+   return static_cast<double>(victories)/simulations + 2*sqrt(log(total_simulations)/simulations);
+}
+
+void MCNode::add_child(TicTacToe game_board, int move)
+{
+   MCNode* child_p = new MCNode(game_board, move);
+   add_child(child_p);
 }
 
 void MCNode::add_child(MCNode* child_p)
 {
+   child_p->parent = this;
    children.push_back(child_p);
 }
 
@@ -143,6 +269,10 @@ void TicTacToe::set_piece(int index)
    auto x = index / BOARD_SIZE_X;
    auto y = index % BOARD_SIZE_Y;
 
+   // Check already won
+   if (winner != BoardPiece::Empty)
+      return;
+
    // Set piece on the board
    board[x][y] = next_move;
 
@@ -151,6 +281,7 @@ void TicTacToe::set_piece(int index)
 
    // Set next move
    next_move = (next_move == BoardPiece::X) ? BoardPiece::O : BoardPiece::X;
+   last_move_index = index;
 
    // Check winner
    check_winner();
@@ -220,35 +351,46 @@ BoardPiece TicTacToe::check_row(int x, int y)
 BoardPiece TicTacToe::check_diag(int x, int y)
 {
    auto base = board[x][y];
-
-   if (base == BoardPiece::Empty)
-      return base;
+   bool did_find;
 
    if ((y + WIN_CLAUSE) > BOARD_SIZE_Y)
       return BoardPiece::Empty;
 
+   if (base == BoardPiece::Empty)
+      return base;
+
    if ((x + WIN_CLAUSE) <= BOARD_SIZE_X)
    {
+      did_find = true;
       for (int i = 0; i < WIN_CLAUSE; ++i)
       {
          auto piece = board[x + i][y + i];
          if (piece != base)
-            return BoardPiece::Empty;
+         {
+            did_find = false;
+            break;
+         }
       }
       
-      return base;
+      if (did_find)
+         return base;
    }
 
-   if (x >= WIN_CLAUSE)
+   if (x >= WIN_CLAUSE-1)
    {
+      did_find = true;
       for (int i = 0; i < WIN_CLAUSE; ++i)
       {
-         auto piece = board[x + i - WIN_CLAUSE][y + i];
+         auto piece = board[x - i][y + i];
          if (piece != base)
-            return BoardPiece::Empty;
+         {
+            did_find = false;
+            break;
+         }
       }
 
-      return base;
+      if (did_find)
+         return base;
    }
    
    return BoardPiece::Empty;
@@ -300,19 +442,26 @@ int main(void)
 
    while (!game.is_game_over() && ((std::cout << "Select next location:", std::cin >> user_input, user_input) != -1))
    {
+      if (!game.is_legal_move(user_input))
+      {
+         std::cout << "illgeal move" << std::endl;
+         continue;;
+      }
+
       // Set user  piece
       game.set_piece(user_input);
 
       // Set PC piece
       //game.play_random_move();
       
+      // Create MCTS object
+      MCTS tree(game);
+      auto pc_move = tree.find_next_move();
+      game.set_piece(pc_move);
+      tree.print_tree();
+
       // Print board
       game.print_board();
-      
-      // Create MCTS object
-      MCTS tree;
-      tree.find_next_move(game);
-      tree.print_tree();
    }
 
    std::cout << "Winner is: " << static_cast<int>(game.who_won());
