@@ -37,7 +37,7 @@ public:
 
    bool is_legal_move(int index) { return find(possible_moves.begin(), possible_moves.end(), index) != possible_moves.end(); }
 
-   int is_game_over() { return possible_moves.empty() || winner != BoardPiece::Empty; }
+   bool is_game_over() { return possible_moves.empty() || winner != BoardPiece::Empty; }
    BoardPiece who_won() { return winner; }
    BoardPiece whos_next() { return next_move; }
    int last_move() { return last_move_index; }
@@ -50,6 +50,7 @@ class MCNode
    int simulations;
    int victories;
    int move;
+   bool is_locked;
 
 public:
    TicTacToe game;
@@ -69,6 +70,10 @@ public:
 
    bool is_first_simulation() { return simulations == 0; }
    double get_ucb1(int total_simulations);
+
+   bool is_terminal() { return is_locked || game.is_game_over(); }
+   bool get_locked() { return is_locked; }
+   void set_locked(bool locked) { is_locked = locked; }
 };
 
 class MCTS
@@ -98,7 +103,7 @@ int MCTS::find_next_move()
    auto max_simulations = 5000;
    BoardPiece next_move = root.game.whos_next();
 
-   while (!selected_child && max_simulations > 0)
+   while (max_simulations > 0 && !root.is_terminal())
    {
       // Check 0 children
       if (root_node->children.size() == 0)
@@ -120,18 +125,20 @@ int MCTS::find_next_move()
 
       if (root_node->children.size() == 0)
       {
-         MCTS::total_simulations++;
-         max_simulations--;
-
-         // Reset root
+         root_node->set_locked(true);
          root_node = &root;
-         selected_child = NULL;
-
+         selected_child = nullptr;
+         continue;
       }
 
       auto ucb1 = -1.0;
       for (auto& child : root_node->children)
       {
+         if (child->get_locked())
+         {
+            continue;
+         }
+
          if (child->is_first_simulation())
          {
             // Select this child
@@ -145,6 +152,15 @@ int MCTS::find_next_move()
             ucb1 = local_ucb1;
             selected_child = child;
          }
+      }
+
+      if (!selected_child)
+      {
+         root_node->set_locked(true);
+         
+         root_node = &root;
+         selected_child = nullptr;
+         continue;
       }
 
       // Check if first visit
@@ -184,9 +200,10 @@ int MCTS::find_next_move()
    {
       if (!child->is_first_simulation())
       {
-         if (child->get_ucb1(MCTS::total_simulations) > ucb1)
+         auto compare = child->get_simulations(); //static_cast<double>(child->get_wins()) / child->get_simulations();
+         if (ucb1 < compare)
          {
-            ucb1 = child->get_ucb1(MCTS::total_simulations);
+            ucb1 = compare;
             selected_child = child;
          }
       }
@@ -236,7 +253,9 @@ MCNode::MCNode(TicTacToe game_board, int game_move)
    game = game_board;
    move = game_move;
    parent = nullptr;
+   is_locked = false;
 }
+ 
 
 double MCNode::get_ucb1(int total_simulations)
 {
@@ -440,6 +459,22 @@ int main(void)
 
    srand(0);
 
+   int pc_first;
+   std::cout << "select who will start (0 - me, 1 - pc): ";
+   std::cin >> pc_first;
+
+   if (pc_first)
+   {
+      // Create MCTS object
+      MCTS tree(game);
+      auto pc_move = tree.find_next_move();
+      game.set_piece(pc_move);
+
+      // Print board
+      game.print_board();
+      //tree.print_tree();
+   }
+
    while (!game.is_game_over() && ((std::cout << "Select next location:", std::cin >> user_input, user_input) != -1))
    {
       if (!game.is_legal_move(user_input))
@@ -451,23 +486,25 @@ int main(void)
       // Set user  piece
       game.set_piece(user_input);
 
-      // Set PC piece
-      //game.play_random_move();
-      
       // Create MCTS object
       MCTS tree(game);
       auto pc_move = tree.find_next_move();
       game.set_piece(pc_move);
-      tree.print_tree();
 
       // Print board
       game.print_board();
+      //tree.print_tree();
    }
 
-   std::cout << "Winner is: " << static_cast<int>(game.who_won());
+   if (game.who_won() == BoardPiece::X)
+      std::cout << "X won!" << std::endl;
+   else if (game.who_won() == BoardPiece::O)
+      std::cout << "X won!" << std::endl;
+   else
+      std::cout << "finished a tie" << std::endl;
 
-// std::cin >> user_input;
-// std::cout << "user: " << user_input;
+   // Wait for response
+   std::cin >> user_input;
 
    return 0;
 }
